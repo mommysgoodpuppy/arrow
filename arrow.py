@@ -1,106 +1,154 @@
+import re
 class Router:
     def __init__(self):
         self.routes = {}
-        self.values = {}
         self.scopes = {}
 
     def debug(self, msg):
         print(f"DEBUG: {msg}")
 
     def execute(self, code):
-        blocks = self._parse_blocks(code)
+        blocks, lines = self._parse_blocks(code)
         self.debug(f"Parsed blocks: {blocks}")
         for block in blocks:
-            self._process(block)
+            self._process_block(block)
+        for line in lines:
+            self._execute_line(line)
 
     def _parse_blocks(self, code):
         lines = [
             line.strip()
-            for line in code.split("\n")
+            for line in code.strip().split("\n")
             if line.strip() and not line.strip().startswith("#")
         ]
-        blocks, stack, current = [], [], []
+        blocks, current_block, stack = [], [], []
+        remaining_lines = []
         for line in lines:
             if line.endswith("{"):
-                stack.append(line)
-                current.append(line)
-            elif line.startswith("}"):
+                stack.append("{")
+                current_block.append(line)
+            elif line == "}":
                 stack.pop()
-                current.append(line)
+                current_block.append(line)
                 if not stack:
-                    blocks.append(current.copy())
-                    current.clear()
+                    blocks.append(current_block)
+                    current_block = []
+            elif stack:
+                current_block.append(line)
             else:
-                current.append(line)
-        blocks += current if current else []
-        return blocks
+                remaining_lines.append(line)
+        return blocks, remaining_lines
 
-    def _process(self, block):
-        if isinstance(block, list):
-            target = block[0].split(">")[0].strip()
-            self.debug(f"Processing block for {target}")
-            scope = {}
-            self.scopes[target] = scope
-            for line in block[1:-1] if block[0].endswith("{") else block:
+    def _process_block(self, block):
+        header = block[0]
+        target = header.split(">")[0].strip()
+        self.scopes.setdefault(target, {})
+        self.debug(f"Processing block for '{target}'")
+        for line in block[1:-1]:
+            if ">=" in line:
+                var, func_call = map(str.strip, line.split(">="))
+                new_line = f"{func_call} > {target} > {var}"
+                self.debug(f"Executing callback assignment: '{new_line}'")
+                self._execute_line(new_line)
+            else:
                 parts = [p.strip() for p in line.split(">")]
-                if len(parts) == 2:
-                    if parts[1].isdigit():
-                        scope[parts[0]] = int(parts[1])
-                    elif parts[1].startswith('"') and parts[1].endswith('"'):
-                        scope[parts[0]] = parts[1][1:-1]  # Remove quotes for string
+                if len(parts) >= 2:
+                    key, value = parts[0], ">".join(parts[1:])
+                    if value.startswith('"') and value.endswith('"'):
+                        self.scopes[target][key] = value[1:-1]
+                        self.debug(f"Assigned '{target}.{key}' = '{value[1:-1]}'")
                     else:
-                        self.routes[f"{target}.{parts[0]}"] = " > ".join(parts[1:])
-                else:
-                    self.routes[f"{target}.{parts[0]}"] = " > ".join(parts[1:])
-            self.debug(f"Block scope: {scope}")
-            self.debug(f"Updated routes: {self.routes}")
-        else:
-            self._route(block)
+                        route_key = f"{target}.{key}"
+                        self.routes[route_key] = value
+                        self.debug(f"Assigned route: '{route_key}' = '{value}'")
+        self.debug(f"Block scope for '{target}': {self.scopes[target]}")
+        self.debug(f"Current Routes: {self.routes}")
 
-    def _route(self, line):
-        self.debug(f"Routing: {line}")
+    def _execute_line(self, line):
+        self.debug(f"Executing line: '{line}'")
         parts = [p.strip() for p in line.split(">")]
-
-        if parts[0] == "systemPrint":
-            value = parts[1] if len(parts) > 1 else None
-            value = self._resolve_value(value)
-            print(value)
+        if not parts:
+            self.debug(f"No action for line: '{line}'")
             return
 
-        if len(parts) == 2:
-            if parts[1].isdigit():
-                self.values[parts[0]] = int(parts[1])
-                return
-            elif parts[1].startswith('"') and parts[1].endswith('"'):  # Handle string
-                self.values[parts[0]] = parts[1][1:-1]
-                return
-
-        route_key = f"{parts[0]}.{parts[1]}" if len(parts) > 1 else parts[0]
-        self.debug(f"Route key: {route_key}")
-
-        if route_key in self.routes:
-            action = self._substitute(self.routes[route_key], parts)
-            self.debug(f"Following route {route_key} -> {action}")
-            self._route(action)
-
-    def _resolve_value(self, value):
-        if value and value.startswith("@"):
-            return str(self.values.get(value[1:], value))
-        return value
-
-    def _substitute(self, action, parts):
         target = parts[0]
-        args = parts[2:]
-        scope = self.scopes.get(target, {})
-        for var, val in scope.items():
-            action = action.replace(f"@{var}", str(val))
-        for i, arg in enumerate(args):
-            action = action.replace(f"arg{i}", arg)
-        return action
+        action = parts[1] if len(parts) > 1 else None
+        args = parts[2:] if len(parts) > 2 else []
+
+        if action:
+            route_key = f"{target}.{action}"
+            route_action = self.routes.get(route_key)
+            if route_action:
+                substituted_action = self._substitute_args(route_action, args)
+                self.debug(
+                    f"Executing route: '{route_key}' with substituted action: '{substituted_action}'"
+                )
+                self._execute_line(substituted_action)
+            elif len(parts) == 3 and target in self.scopes:
+                # Assigning a value to a variable
+                var = action
+                value = self._substitute_args(args[0], [])
+                resolved_value = self._resolve_value(value, target)
+                self.scopes[target][var] = resolved_value
+                self.debug(f"Assigned '{target}.{var}' = '{resolved_value}'")
+            elif target == "systemPrint":
+                # Handle systemPrint
+                value = self._substitute_args(action, args)
+                resolved_value = self._resolve_value(value, target)
+                self.debug(f"Executing 'systemPrint' with value: '{resolved_value}'")
+                self.systemPrint(resolved_value)
+            else:
+                self.debug(f"No route found for '{route_key}'")
+        else:
+            self.debug(f"No action for line: '{line}'")
+
+    def _substitute_args(self, action, args):
+        """
+        Substitute 'argN' in action with the N-th argument from args.
+        """
+
+        def arg_replacer(match):
+            index = int(match.group(1))
+            if index < len(args):
+                return args[index]
+            else:
+                return ""  # Empty string if argument is not provided
+
+        pattern = re.compile(r"arg(\d+)")
+        substituted_action = pattern.sub(arg_replacer, action)
+        return substituted_action
+
+    def _resolve_value(self, value, current_target):
+        if value.startswith("@"):
+            var_name = value[1:]
+            if var_name in self.scopes.get(current_target, {}):
+                return self.scopes[current_target][var_name]
+            for variables in self.scopes.values():
+                if var_name in variables:
+                    return variables[var_name]
+            return "none"
+        return value.strip('"')
+
+    def systemPrint(self, value):
+        print(value)
 
 
 # Test
-test_code = """
+test_code1 = """
+funcwithsecret > {
+    secret > "hello world"
+    true > arg0 > arg1 > @secret
+}
+
+getsecret > {
+    value >= funcwithsecret > true
+    true > systemPrint > @value
+}
+
+getsecret > true
+"""
+
+test_code2 = """
 funcwithsecret > {
     secret > "hello world"
     true > arg0 > arg1 > @secret
@@ -115,4 +163,5 @@ getsecret > true
 
 print("Running test program:")
 print("--------------------")
-Router().execute(test_code)
+Router().execute(test_code1)
+Router().execute(test_code2)
