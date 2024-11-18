@@ -1,0 +1,1 @@
+arrow is a functionally pure turing complete non-functional(i mean functionless), illlogical, stateless, computationless, holomonadic programming language where everything is constructed out of side-effects and metapatterns
