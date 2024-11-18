@@ -5,7 +5,6 @@ class Router:
     def __init__(self):
         self.routes = {}
         self.deferred_routes = {}
-        self.actors = {}
         self.scopes = [{}]
 
     def debug(self, msg):
@@ -59,8 +58,10 @@ class Router:
                 if len(parts) >= 2:
                     key, value = parts[0], ">".join(parts[1:])
                     if value.startswith('"') and value.endswith('"'):
-                        self.actors[key] = value[1:-1]
-                        self.debug(f"Created actor '{key}' with data '{value[1:-1]}'")
+                        self.scopes[-1][key] = value[1:-1]
+                        self.debug(
+                            f"Assigned '{key}' = '{value[1:-1]}' in current scope"
+                        )
                     else:
                         route_key = f"{target}.{key}"
                         if key.startswith("arg"):
@@ -72,7 +73,6 @@ class Router:
         self.debug(f"Block scope: {self.scopes[-1]}")
         self.debug(f"Current Routes: {self.routes}")
         self.debug(f"Deferred Routes: {self.deferred_routes}")
-        self.debug(f"Actors: {self.actors}")
 
     def _execute_line(self, line):
         self.debug(f"Executing line: '{line}'")
@@ -93,21 +93,25 @@ class Router:
                 self.debug(
                     f"Executing route: '{route_key}' with substituted action: '{substituted_action}'"
                 )
-                self._execute_line(substituted_action)
+                return self._execute_line(substituted_action)
+            elif len(parts) == 3 and not action.startswith('"'):
+                var = action
+                value = self._substitute_args(args[0], [])
+                resolved_value = self._resolve_value(value)
+                self.scopes[-1][var] = resolved_value
+                self.debug(f"Assigned '{var}' = '{resolved_value}' in current scope")
+                return resolved_value
             elif target == "systemPrint":
                 value = self._substitute_args(action, args)
                 resolved_value = self._resolve_value(value)
                 self.debug(f"Executing 'systemPrint' with value: '{resolved_value}'")
                 self.systemPrint(resolved_value)
             else:
-                self._execute_deferred_routes(target, action, args)
+                return self._execute_deferred_routes(target, action, args)
         else:
-            self.debug(
-                f"Sending message to '{target}' with args: {', '.join(parts[1:])}"
-            )
+            return self._resolve_value(target)
 
     def _execute_deferred_routes(self, target, action, args):
-        executed = False
         for i in range(len(args) + 1):  # +1 to include the action as arg0
             route_key = f"{target}.arg{i}"
             if route_key in self.deferred_routes:
@@ -122,13 +126,11 @@ class Router:
                     self.debug(
                         f"Executing transformed deferred route: '{substituted_action}'"
                     )
-                    self._execute_line(substituted_action)
-                    executed = True
-                    break
-        if not executed:
-            self.debug(
-                f"No matching route or deferred route found for: {target} > {action} > {' > '.join(args)}"
-            )
+                    return self._execute_line(substituted_action)
+        self.debug(
+            f"No matching route or deferred route found for: {target} > {action} > {' > '.join(args)}"
+        )
+        return None
 
     def _substitute_args(self, action, args):
         def arg_replacer(match):
@@ -144,9 +146,10 @@ class Router:
 
     def _resolve_value(self, value):
         if value.startswith("@"):
-            actor_name = value[1:]
-            if actor_name in self.actors:
-                return self.actors[actor_name]
+            var_name = value[1:]
+            for scope in reversed(self.scopes):
+                if var_name in scope:
+                    return scope[var_name]
             return "none"
         return value
 
