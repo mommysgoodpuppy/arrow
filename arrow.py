@@ -106,17 +106,30 @@ class Router:
                 self.debug(f"Executing 'systemPrint' with value: '{value}'")
                 self.systemPrint(value)
             else:
-                return self._execute_deferred_routes(target, action, args)
+                # Execute regular route first
+                result = self._execute_deferred_routes(target, action, args)
+
+                # Now check for arg0 match specifically
+                route_key = f"{target}.arg0"
+                if route_key in self.deferred_routes:
+                    route_action = self.deferred_routes[route_key]
+                    transformed_action = route_action.replace("arg0", action)
+                    self.debug(
+                        f"Executing arg0 deferred route: '{route_key}' with action: '{transformed_action}'"
+                    )
+                    self._execute_line(transformed_action)
+                return result
+
         else:
             return self._resolve_value(target)
 
     def _execute_deferred_routes(self, target, action, args):
-        for i in range(len(args) + 1):  # +1 to include the action as arg0
+        for i in range(1, len(args) + 1):  # Start from 1 to skip arg0
             route_key = f"{target}.arg{i}"
             if route_key in self.deferred_routes:
                 route_action = self.deferred_routes[route_key]
-                arg_value = action if i == 0 else args[i - 1]
-                if i > 0 and arg_value == action:  # Check if argN matches arg0 (action)
+                arg_value = args[i - 1]
+                if arg_value == action:  # Check if argN matches arg0 (action)
                     transformed_action = route_action.replace(f"arg{i}", arg_value)
                     self.debug(
                         f"Transformed deferred route: '{route_key}' to '{transformed_action}'"
@@ -202,6 +215,16 @@ getsecret > {
 getsecret > "st" > "st"
 """
 
+test_code4 = """
+getsecret > {
+    value >= funcwithsecret > true
+    true > systemPrint > @value
+    arg0 > systemPrint > "else"
+}
+
+getsecret > "st"
+"""
+
 print("Running test programs:")
 print("--------------------")
 Router().execute(test_code1)
@@ -209,3 +232,5 @@ print("--------------------")
 Router().execute(test_code2)
 print("--------------------")
 Router().execute(test_code3)
+print("--------------------")
+Router().execute(test_code4)
