@@ -4,7 +4,9 @@ import re
 class Router:
     def __init__(self):
         self.routes = {}
-        self.scopes = [{}]  # Use a list of dictionaries for nested scopes
+        self.deferred_routes = {}
+        self.actors = {}
+        self.scopes = [{}]
 
     def debug(self, msg):
         print(f"DEBUG: {msg}")
@@ -44,7 +46,7 @@ class Router:
     def _process_block(self, block):
         header = block[0]
         target = header.split(">")[0].strip()
-        self.scopes.append({})  # Create a new scope for this block
+        self.scopes.append({})
         self.debug(f"Processing block for '{target}'")
         for line in block[1:-1]:
             if ">=" in line:
@@ -57,16 +59,20 @@ class Router:
                 if len(parts) >= 2:
                     key, value = parts[0], ">".join(parts[1:])
                     if value.startswith('"') and value.endswith('"'):
-                        self.scopes[-1][key] = value[1:-1]
-                        self.debug(
-                            f"Assigned '{key}' = '{value[1:-1]}' in current scope"
-                        )
+                        self.actors[key] = value[1:-1]
+                        self.debug(f"Created actor '{key}' with data '{value[1:-1]}'")
                     else:
                         route_key = f"{target}.{key}"
-                        self.routes[route_key] = value
-                        self.debug(f"Assigned route: '{route_key}' = '{value}'")
+                        if key.startswith("arg"):
+                            self.deferred_routes[route_key] = value
+                            self.debug(f"Deferred route: '{route_key}' = '{value}'")
+                        else:
+                            self.routes[route_key] = value
+                            self.debug(f"Assigned route: '{route_key}' = '{value}'")
         self.debug(f"Block scope: {self.scopes[-1]}")
         self.debug(f"Current Routes: {self.routes}")
+        self.debug(f"Deferred Routes: {self.deferred_routes}")
+        self.debug(f"Actors: {self.actors}")
 
     def _execute_line(self, line):
         self.debug(f"Executing line: '{line}'")
@@ -88,23 +94,41 @@ class Router:
                     f"Executing route: '{route_key}' with substituted action: '{substituted_action}'"
                 )
                 self._execute_line(substituted_action)
-            elif len(parts) == 3:
-                # Assigning a value to a variable
-                var = action
-                value = self._substitute_args(args[0], [])
-                resolved_value = self._resolve_value(value)
-                self.scopes[-1][var] = resolved_value
-                self.debug(f"Assigned '{var}' = '{resolved_value}' in current scope")
             elif target == "systemPrint":
-                # Handle systemPrint
                 value = self._substitute_args(action, args)
                 resolved_value = self._resolve_value(value)
                 self.debug(f"Executing 'systemPrint' with value: '{resolved_value}'")
                 self.systemPrint(resolved_value)
             else:
-                self.debug(f"No route found for '{route_key}'")
+                self._execute_deferred_routes(target, action, args)
         else:
-            self.debug(f"No action for line: '{line}'")
+            self.debug(
+                f"Sending message to '{target}' with args: {', '.join(parts[1:])}"
+            )
+
+    def _execute_deferred_routes(self, target, action, args):
+        executed = False
+        for i in range(len(args) + 1):  # +1 to include the action as arg0
+            route_key = f"{target}.arg{i}"
+            if route_key in self.deferred_routes:
+                route_action = self.deferred_routes[route_key]
+                arg_value = action if i == 0 else args[i - 1]
+                if i > 0 and arg_value == action:  # Check if argN matches arg0 (action)
+                    transformed_action = route_action.replace(f"arg{i}", arg_value)
+                    self.debug(
+                        f"Transformed deferred route: '{route_key}' to '{transformed_action}'"
+                    )
+                    substituted_action = self._substitute_args(transformed_action, args)
+                    self.debug(
+                        f"Executing transformed deferred route: '{substituted_action}'"
+                    )
+                    self._execute_line(substituted_action)
+                    executed = True
+                    break
+        if not executed:
+            self.debug(
+                f"No matching route or deferred route found for: {target} > {action} > {' > '.join(args)}"
+            )
 
     def _substitute_args(self, action, args):
         def arg_replacer(match):
@@ -112,7 +136,7 @@ class Router:
             if index < len(args):
                 return args[index]
             else:
-                return ""  # Empty string if argument is not provided
+                return ""
 
         pattern = re.compile(r"arg(\d+)")
         substituted_action = pattern.sub(arg_replacer, action)
@@ -120,30 +144,17 @@ class Router:
 
     def _resolve_value(self, value):
         if value.startswith("@"):
-            var_name = value[1:]
-            for scope in reversed(self.scopes):
-                if var_name in scope:
-                    return scope[var_name]
+            actor_name = value[1:]
+            if actor_name in self.actors:
+                return self.actors[actor_name]
             return "none"
-        return value.strip('"')
+        return value
 
     def systemPrint(self, value):
         print(value)
 
 
-# Test
-
-test_code = """
-
-getsecret > {
-    value >= funcwithsecret > true
-    true > systemPrint > @value
-    arg0 > systemPrint > "else"
-}
-
-getsecret > false
-"""
-
+# Test cases
 test_code1 = """
 funcwithsecret > {
     secret > "hello world"
@@ -171,8 +182,20 @@ getsecret > {
 getsecret > true
 """
 
-print("Running test program:")
+test_code3 = """
+getsecret > {
+    value >= funcwithsecret > true
+    true > systemPrint > @value
+    arg1 > systemPrint > "else"
+}
+
+getsecret > "st" > "st"
+"""
+
+print("Running test programs:")
 print("--------------------")
-Router().execute(test_code)
-#Router().execute(test_code1)
-#Router().execute(test_code2)
+Router().execute(test_code1)
+print("--------------------")
+Router().execute(test_code2)
+print("--------------------")
+Router().execute(test_code3)
