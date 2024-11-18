@@ -47,8 +47,37 @@ class Router:
         target = header.split(">")[0].strip()
         self.scopes.append({})
         self.debug(f"Processing block for '{target}'")
+
+        def process_instant_execution(line):
+            # Remove the leading > and create execution line
+            exec_line = line[1:].strip()
+            # Resolve any @variables in the line
+            resolved_line = self._substitute_args(exec_line, [])
+            self.debug(f"Found instant execution line: '{exec_line}' resolved to '{resolved_line}'")
+
+            # First, create the route from the line (without the leading >)
+            parts = [p.strip() for p in exec_line.split(">")]
+            if len(parts) >= 2:
+                route_key = f"{target}.{parts[0]}"
+                route_value = ">".join(parts[1:])
+                self.routes[route_key] = route_value
+                self.debug(f"Created route from instant execution: {route_key} = {route_value}")
+
+            # Then handle execution by forcing systemPrint as the target
+            if resolved_line.startswith(">"):
+                process_instant_execution(resolved_line)
+            else:
+                # Split into parts but keep systemPrint as the target
+                parts = [p.strip() for p in resolved_line.split(">")]
+                if len(parts) >= 3 and parts[1] == "systemPrint":
+                    exec_line = f"systemPrint > {parts[2]}"
+                    self.debug(f"Executing modified line: {exec_line}")
+                    self._execute_line(exec_line)
+        
         for line in block[1:-1]:
-            if ">=" in line:
+            if line.startswith(">"): # Handle instant execution
+                process_instant_execution(line)
+            elif ">=" in line:
                 var, func_call = map(str.strip, line.split(">="))
                 new_line = f"{func_call} > {target} > {var}"
                 self.debug(f"Executing callback assignment: '{new_line}'")
@@ -70,6 +99,7 @@ class Router:
                         else:
                             self.routes[route_key] = value
                             self.debug(f"Assigned route: '{route_key}' = '{value}'")
+        
         self.debug(f"Block scope: {self.scopes[-1]}")
         self.debug(f"Current Routes: {self.routes}")
         self.debug(f"Deferred Routes: {self.deferred_routes}")
@@ -224,6 +254,112 @@ getsecret > {
 
 getsecret > "st"
 """
+
+test_code_match_countdownX = """
+countdown > {
+    zero > systemPrint > "Countdown finished!"
+    arg0 > substract > arg0 > countdown
+}
+
+substract > {
+    five > arg0 > four
+    four > arg0 > three
+    three > arg0 > two
+    two > arg0 > one
+    one > arg0 > zero
+}
+
+# Start the countdown from 5
+countdown > five
+"""
+
+
+test_codesucc = """
+# Define zero and successor function
+zero > {
+    true > arg0 > arg1
+}
+
+succ > {
+    true > arg0 > arg1 > arg2
+    true > @arg0 > succ > @arg1 > @arg2
+}
+
+# Define increment operation
+increment > {
+    true > succ > arg0 > arg1
+}
+
+# Define a function to convert our number representation to a string
+to_string > {
+    zero > arg0 > arg1 > "zero"
+    true > arg0 > to_string_helper > 1 > arg1
+}
+
+to_string_helper > {
+    zero > arg0 > arg1 > arg2
+    true > arg2 > @arg1
+    true > arg0 > to_string_helper > @arg1 > plusOne > arg2
+}
+
+plusOne > {
+    true > arg0 > add > 1
+}
+
+add > {
+    0 > arg0 > arg1 > @arg1
+    true > arg0 > arg1 > add > subtract > @arg0 > 1 > succ > @arg1
+}
+
+subtract > {
+    0 > arg0 > arg1 > @arg0
+    true > arg0 > arg1 > subtract > @arg0 > 1 > @arg1
+}
+
+# Test increment
+test_increment > {
+    one >= succ > zero
+    two >= succ > one
+    result >= increment > two
+    string_result >= to_string > @result
+    true > systemPrint > "Increment of two is: @string_result"
+}
+
+# Run the test
+test_increment > true
+"""
+
+testcodeP = """
+parallel > {
+    > print1 > systemPrint > "Branch One Started"
+    > print2 > systemPrint > "Branch Two Started"
+    
+    # Normal routes can still exist
+    arg0 > systemPrint > "Normal execution"
+}
+
+meta3 > {
+    pattern > "> print > systemPrint > \"meta3\""
+    > @pattern
+}
+metaoriginal > {
+    > print > systemPrint > "metaorig"
+}
+
+metameta > {
+    gen > "> > print > systemPrint > \"Double meta!\""
+    > @gen     
+}
+
+
+parallel > true
+
+"""
+
+print("Running recursive countdown test:")
+print("--------------------")
+Router().execute(testcodeP)
+
 
 print("Running test programs:")
 print("--------------------")
