@@ -103,9 +103,8 @@ class Router:
                 return resolved_value
             elif target == "systemPrint":
                 value = self._substitute_args(action, args)
-                resolved_value = self._resolve_value(value)
-                self.debug(f"Executing 'systemPrint' with value: '{resolved_value}'")
-                self.systemPrint(resolved_value)
+                self.debug(f"Executing 'systemPrint' with value: '{value}'")
+                self.systemPrint(value)
             else:
                 return self._execute_deferred_routes(target, action, args)
         else:
@@ -140,8 +139,16 @@ class Router:
             else:
                 return ""
 
+        def at_replacer(match):
+            var_name = match.group(1)
+            return self._resolve_value(f"@{var_name}")
+
         pattern = re.compile(r"arg(\d+)")
         substituted_action = pattern.sub(arg_replacer, action)
+
+        at_pattern = re.compile(r"@(\w+)")
+        substituted_action = at_pattern.sub(at_replacer, substituted_action)
+
         return substituted_action
 
     def _resolve_value(self, value):
