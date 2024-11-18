@@ -274,60 +274,6 @@ countdown > five
 """
 
 
-test_codesucc = """
-# Define zero and successor function
-zero > {
-    true > arg0 > arg1
-}
-
-succ > {
-    true > arg0 > arg1 > arg2
-    true > @arg0 > succ > @arg1 > @arg2
-}
-
-# Define increment operation
-increment > {
-    true > succ > arg0 > arg1
-}
-
-# Define a function to convert our number representation to a string
-to_string > {
-    zero > arg0 > arg1 > "zero"
-    true > arg0 > to_string_helper > 1 > arg1
-}
-
-to_string_helper > {
-    zero > arg0 > arg1 > arg2
-    true > arg2 > @arg1
-    true > arg0 > to_string_helper > @arg1 > plusOne > arg2
-}
-
-plusOne > {
-    true > arg0 > add > 1
-}
-
-add > {
-    0 > arg0 > arg1 > @arg1
-    true > arg0 > arg1 > add > subtract > @arg0 > 1 > succ > @arg1
-}
-
-subtract > {
-    0 > arg0 > arg1 > @arg0
-    true > arg0 > arg1 > subtract > @arg0 > 1 > @arg1
-}
-
-# Test increment
-test_increment > {
-    one >= succ > zero
-    two >= succ > one
-    result >= increment > two
-    string_result >= to_string > @result
-    true > systemPrint > "Increment of two is: @string_result"
-}
-
-# Run the test
-test_increment > true
-"""
 
 testcodeP = """
 parallel > {
@@ -358,6 +304,7 @@ parallel > true
 
 print("Running recursive countdown test:")
 print("--------------------")
+Router().execute(test_code_match_countdownX)
 Router().execute(testcodeP)
 
 
