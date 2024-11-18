@@ -1,8 +1,10 @@
 import re
+
+
 class Router:
     def __init__(self):
         self.routes = {}
-        self.scopes = {}
+        self.scopes = [{}]  # Use a list of dictionaries for nested scopes
 
     def debug(self, msg):
         print(f"DEBUG: {msg}")
@@ -42,7 +44,7 @@ class Router:
     def _process_block(self, block):
         header = block[0]
         target = header.split(">")[0].strip()
-        self.scopes.setdefault(target, {})
+        self.scopes.append({})  # Create a new scope for this block
         self.debug(f"Processing block for '{target}'")
         for line in block[1:-1]:
             if ">=" in line:
@@ -55,13 +57,15 @@ class Router:
                 if len(parts) >= 2:
                     key, value = parts[0], ">".join(parts[1:])
                     if value.startswith('"') and value.endswith('"'):
-                        self.scopes[target][key] = value[1:-1]
-                        self.debug(f"Assigned '{target}.{key}' = '{value[1:-1]}'")
+                        self.scopes[-1][key] = value[1:-1]
+                        self.debug(
+                            f"Assigned '{key}' = '{value[1:-1]}' in current scope"
+                        )
                     else:
                         route_key = f"{target}.{key}"
                         self.routes[route_key] = value
                         self.debug(f"Assigned route: '{route_key}' = '{value}'")
-        self.debug(f"Block scope for '{target}': {self.scopes[target]}")
+        self.debug(f"Block scope: {self.scopes[-1]}")
         self.debug(f"Current Routes: {self.routes}")
 
     def _execute_line(self, line):
@@ -84,17 +88,17 @@ class Router:
                     f"Executing route: '{route_key}' with substituted action: '{substituted_action}'"
                 )
                 self._execute_line(substituted_action)
-            elif len(parts) == 3 and target in self.scopes:
+            elif len(parts) == 3:
                 # Assigning a value to a variable
                 var = action
                 value = self._substitute_args(args[0], [])
-                resolved_value = self._resolve_value(value, target)
-                self.scopes[target][var] = resolved_value
-                self.debug(f"Assigned '{target}.{var}' = '{resolved_value}'")
+                resolved_value = self._resolve_value(value)
+                self.scopes[-1][var] = resolved_value
+                self.debug(f"Assigned '{var}' = '{resolved_value}' in current scope")
             elif target == "systemPrint":
                 # Handle systemPrint
                 value = self._substitute_args(action, args)
-                resolved_value = self._resolve_value(value, target)
+                resolved_value = self._resolve_value(value)
                 self.debug(f"Executing 'systemPrint' with value: '{resolved_value}'")
                 self.systemPrint(resolved_value)
             else:
@@ -103,10 +107,6 @@ class Router:
             self.debug(f"No action for line: '{line}'")
 
     def _substitute_args(self, action, args):
-        """
-        Substitute 'argN' in action with the N-th argument from args.
-        """
-
         def arg_replacer(match):
             index = int(match.group(1))
             if index < len(args):
@@ -118,14 +118,12 @@ class Router:
         substituted_action = pattern.sub(arg_replacer, action)
         return substituted_action
 
-    def _resolve_value(self, value, current_target):
+    def _resolve_value(self, value):
         if value.startswith("@"):
             var_name = value[1:]
-            if var_name in self.scopes.get(current_target, {}):
-                return self.scopes[current_target][var_name]
-            for variables in self.scopes.values():
-                if var_name in variables:
-                    return variables[var_name]
+            for scope in reversed(self.scopes):
+                if var_name in scope:
+                    return scope[var_name]
             return "none"
         return value.strip('"')
 
@@ -134,6 +132,18 @@ class Router:
 
 
 # Test
+
+test_code = """
+
+getsecret > {
+    value >= funcwithsecret > true
+    true > systemPrint > @value
+    arg0 > systemPrint > "else"
+}
+
+getsecret > false
+"""
+
 test_code1 = """
 funcwithsecret > {
     secret > "hello world"
@@ -163,5 +173,6 @@ getsecret > true
 
 print("Running test program:")
 print("--------------------")
-Router().execute(test_code1)
-Router().execute(test_code2)
+Router().execute(test_code)
+#Router().execute(test_code1)
+#Router().execute(test_code2)
